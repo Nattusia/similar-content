@@ -1,0 +1,4 @@
+name = "Custom similar content"
+description = "Creates the block with similar content for a node page"
+core = 7.x
+package = Custom

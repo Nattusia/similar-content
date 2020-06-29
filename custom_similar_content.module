@@ -1,0 +1,442 @@
+<?php
+
+/**
+ * Implements hook_menu().
+ * Define menu items and page callbacks.
+ */
+function custom_similar_content_menu() {
+  $items = array();
+
+	$items['admin/config/simc'] = array(
+    'title' => 'Similar content',
+    'description' => 'Administrative settings for similar content block',
+    'page callback' => 'system_admin_menu_block_page',
+    'access arguments' => array('administer site configuration'),
+    'file' => 'system.admin.inc',
+    'file path' => drupal_get_path('module', 'system'),
+		'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items['admin/config/simc/settings'] = array(
+    'title' => 'Similar content settings',
+    'description' => 'Administrative settings for similar content block',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('custom_similar_content_settings_form'),
+    'access arguments' => array('administer site configuration'),
+    'file' => 'custom_similar_content.admin.inc',
+		'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items['admin/config/simc/fields'] = array(
+    'title' => 'Similar content fields settings',
+    'description' => 'Administrative settings for similar content block',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('custom_similar_content_settings_fields_form'),
+    'access arguments' => array('administer site configuration'),
+     'file' => 'custom_similar_content.admin.inc',
+		 'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_block_info().
+ * Define all blocks provided by the module.
+ */
+function custom_similar_content_block_info() {
+  $blocks['sim-content'] = array(
+    'info' => t('Similar content block'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ * Return a rendered or renderable view of a block.
+ */
+function custom_similar_content_block_view($delta = '') {
+  $block = array();
+
+  switch ($delta) {
+    case 'sim-content':
+      $block['subject'] = t('Similar content');
+      $block['content'] = custom_similar_content_block_output();
+
+      break;
+  }
+
+  return $block;
+}
+
+/**
+ * Implements hook_theme().
+ * Register a module (or theme's) theme implementations.
+ */
+function custom_similar_content_theme($existing, $type, $theme, $path) {
+  return array(
+    'similar_content' => array(
+      'variables' => array('node' => NULL, 'counts' => NULL),
+			'template' => 'similar-content-item',
+			'path' => drupal_get_path('module', 'custom_similar_content') . '/theme'
+    )
+  );
+}
+
+/**
+ * Gets content types for settings form
+ * @see custom_similar_content_settings_form
+ * @filesource custom_similar_content.admin.inc
+ * @return array
+ * Assotiative array where keys are machine names of content types and values are human names of content types.
+ *
+ */
+function custom_similar_content_get_content_types() {
+
+  $types = db_select('node_type')->fields('node_type', array('type', 'name')) -> execute() -> fetchAllKeyed(0, 1);
+
+  $res_types = array();
+
+  foreach ($types as $ind => $type) {
+    $fields = custom_similar_content_get_fields($ind, FALSE);
+    if(!empty($fields)){
+      $res_types[$ind] = $type;
+
+    }
+  }
+
+  return $res_types;
+}
+
+/**
+ * Gets fields for second step of settings
+ * @param $ntype
+ * String Machine name of node type
+ * @return array
+ * The associative array. Keys are machine names of fields, values are human names.
+ */
+function custom_similar_content_get_fields($ntype, $setval = TRUE) {
+
+  $result = field_info_instances('node', $ntype);
+  $fields = array();
+  foreach ($result as $field => $data) {
+	  $finfo = field_info_field($field);
+    if ($finfo['type'] == 'taxonomy_term_reference') {
+      $fields[$field] = $data['label'];
+    }
+  }
+
+  if ((count($fields) == 1) && ($setval == TRUE)) {
+    variable_set('custom_similar_content_fields_'.$ntype, array(key($fields)));
+    return array();
+  }
+
+  return $fields;
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ * Preprocess theme variables for a specific theme hook.
+ */
+function custom_similar_content_preproces_node(&$variables) {
+  $node = $variables['node'];
+  //debug(array_keys($variables['content']));
+  if ((isset($node->field_seller)) && (isset($node->field_website))) {
+    $name = db_select('taxonomy_term_data', 'td') -> condition('tid', $node->field_seller['tid']) ->fields('td', array('name'))->execute()->fetchField();
+
+    $variables['label_website'] = ($name) ?  $name : 'Seller';
+  }
+
+  if ($vars['view_mode'] == 'similar') {
+    $vars['theme_hook_suggestions'][] = 'node__' . $vars['type'] . '__similar';
+  }
+}
+
+
+
+/**
+ * Creates field "Taxonomy term value" for taxonomy term vocabulary.
+ * @param $ntype
+ * String The type of node linked to the vocabulary.
+ * @param $fname
+ * String Name of the field linked to the vocabulary.
+ */
+function custom_similar_content_create_taxonomy_field($ntype, $fname){
+
+  $result = field_info_field($fname);
+
+  $f_name = 'field_' . $result['settings']['allowed_values'][0]['vocabulary'] . '_term_value';
+
+  if (!($field = field_info_field($f_name))) {
+    field_info_cache_clear();
+	  $field = array(
+        'field_name'=>$f_name,
+        'type'=> 'text',
+        'settings' => array(),
+        'entity_types' => array(),
+        'settings' =>array (
+           'size' => 60,
+                   ),
+        );
+
+      field_create_field($field);
+
+  if (!($field_instanse = field_info_instance('taxonomy_term', $f_name, $result['settings']['allowed_values'][0]['vocabulary']))) {
+
+      $instance = array(
+      'field_name' => $f_name,
+      'entity_type' => 'taxonomy_term',
+      'bundle' => $result['settings']['allowed_values'][0]['vocabulary'],
+	  'label' => 'Taxonomy term value',
+
+    );
+
+      field_create_instance($instance);
+    }
+  }
+}
+
+
+
+/**
+ * Creates field "Quantity of similar content links" for node
+ * @param string $ntype
+ * The type of the node
+ */
+function similar_content_create_node_field($ntype) {
+
+ $f_name = 'field_' . $ntype . '_similar';
+
+  if (!($field = field_info_field($f_name))) {
+    field_info_cache_clear();
+	  $field = array(
+        'field_name'=>$f_name,
+        'type'=> 'text',
+        'settings' => array(),
+        'entity_types' => array(),
+        'settings' =>array (
+           'size' => 60,
+                   ),
+        );
+    field_create_field($field);
+  }
+
+  if (!($field_instanse = field_info_instance('node', $f_name, $ntype))) {
+    $instance = array(
+    'field_name' => $f_name,
+    'entity_type' => 'node',
+    'bundle' => $ntype,
+    'label' => 'Quantity of similar content links',
+    );
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Outputs content of the block "Similar content".
+ * @see custom_similar_content_block_get_content
+ */
+function custom_similar_content_block_output() {
+
+	if ((arg(0) == 'node') && (is_numeric(arg(1)))) {
+	  $cache_id = 'similar_content_node_' . arg(1);
+		$cache = cache_get($cache_id, 'cache_similar_content');
+
+		if (!empty($cache->data)) {
+      return $cache->data;
+		}
+		else {
+
+			$nids = custom_similar_content_block_get_content();
+	    if($nids) {
+        $output = '';
+		    $nodes = node_load_multiple($nids['nids']);
+        if(!empty($nodes)) {
+          $n_views = node_view_multiple($nodes, 'similar');
+          $output = render($n_views);
+        }
+	      /*$output = '';
+	      foreach($nodes as $out){
+          if((isset($out->field_seller)) && (isset($out->field_website))){
+          $name = db_select('taxonomy_term_data', 'td') -> condition('tid', $our ->field_seller['tid']) ->fields('td', array('name'))->execute()->fetchField();
+
+          $out -> label_website = ($name) ?  $name : 'Seller';
+        }
+	        $output .= theme('similar_content', array('node' => $out, 'counts' => $nids['counts']));
+	    }*/
+      cache_set($cache_id, $output, 'cache_similar_content', CACHE_TEMPORARY);
+	    return $output;
+			}
+		}
+	}
+}
+
+
+/**
+ * This is a main function controls getting the block content;
+ * Returns array consists of two parts. nids => the array of the node objects
+ * counts => the array where every element contains information about quantity of common terms and
+ * summ of terms values.
+ */
+function custom_similar_content_block_get_content() {
+
+//check if we are on the node page
+  if ((arg(0) == 'node') && (is_numeric(arg(1)))) {
+
+		//check content types are needed to be processed
+    $types = variable_get('custom_similar_content_types', array());
+    //loading the node object
+    $node = node_load(arg(1));
+
+    $counts = array();
+    $sec = array();
+
+    //check if the node type is the type has to be processed
+    if (isset($types[$node->type])) {
+
+      //get machine names of the fields have to be processed
+      $fields = variable_get('custom_similar_content_fields_'.$node->type, '');
+      if (!empty($fields)) {
+        foreach ($fields as $field) {
+          if (isset($node->{$field}['und'])) {
+            $tids = array();
+            $vid = '';
+            $v_mach = '';
+
+            foreach ($node->{$field}['und'] as $term_link) {
+              if (!isset($term_link['taxonomy_term'])) {
+                //if we use panels the term are not placed on the node object
+                //we need to load taxonomy_term object and get variables are needed
+                $term_link = taxonomy_term_load($term_link['tid']);
+                $vid = $term_link->vid;
+
+                //we gather tids of all the terms in the field
+                $tids[] = $term_link->tid;
+
+                $vocab = taxonomy_vocabulary_load($vid);
+                $v_mach = $vocab -> name;
+
+              }
+              else {
+                //we gather tids of all the terms in the field
+                $tids[] = $term_link['tid'];
+                $vid = $term_link['taxonomy_term'] -> vid;
+                $v_mach = $term_link['taxonomy_term'] -> vocabulary_machine_name;
+              }
+            }
+
+          if (!empty($tids)) {
+            $mach_table = str_replace('-', '_', strtolower('field_data_field_' . $v_mach . '_term_value'));
+            $mach_column = str_replace('-', '_', strtolower('field_' . $v_mach . '_term_value_value'));
+            $tid_link = str_replace('-', '_', strtolower('field_data_' .$field));
+
+            $tid_column = str_replace('-', '_', strtolower($field .'_tid'));
+
+            //https://buildamodule.com/video/drupal-7-development-core-concepts-how-to-work-with-the-database-how-to-write-an-insert-query-with-the-database-api?pc=DBAPI735463
+            //this is a database query. Drupal 7 has own DatabaseAPI so you do not need to use SQL queries.
+            //On the link above you can find some free lessons about it
+            //Look at this link also http://www.wdtutorials.com/drupal/module-development/database-query-examples-drupal-tutorial
+
+            $query = db_select($tid_link, 'tid_link');
+            if (db_table_exists($mach_table)) {
+              $query -> leftjoin($mach_table, 'term_val', 'tid_link.' . $tid_column .' = term_val.entity_id');
+            }
+					  $query -> leftjoin('node', 'n', 'tid_link.entity_id = n.nid');
+					  $query -> condition('n.status', 1);
+					  $query -> condition('n.type', $node->type);
+            $query -> condition('tid_link.' . $tid_column, $tids, 'IN');
+					  $query -> condition('tid_link.entity_id', $node->nid, '!=');
+            $query -> fields('tid_link', array('entity_id'));
+            if (db_table_exists($mach_table)) {
+              $query -> fields('term_val', array($mach_column));
+            }
+            $query = $query->execute() ->fetchAll();
+
+          }
+
+          // now we get all the data from the database and can count quantity of common terms and terms values
+          // I think it may be a little difficult for newbies. You have to write some cicles by yourself to
+          // figure out how it works.
+          foreach ($query as $data) {
+            if (!isset($counts[$data->entity_id])) {
+              $i = 1;
+              $counts[$data->entity_id]['i'] = $i;
+
+              if (isset($data->{$mach_column})) {
+                $counts[$data->entity_id]['summ'] = $data->{$mach_column};
+              }
+            }
+            else {
+              $counts[$data->entity_id]['i'] = $counts[$data->entity_id]['i']+1;
+
+              if (isset($data->{$mach_column})) {
+                $counts[$data->entity_id]['summ'] = $counts[$data->entity_id]['summ'] + $data->{$mach_column};
+              }
+            }
+           }
+          }
+        }
+
+        //Now we counted everything an sort the array as we need
+        //Take a look at uasort php function on php.net
+        uasort($counts, 'custom_similar_content_uasort');
+				$f_name = 'field_' . $node->type . '_similar';
+        $qty = ((isset($node->{$f_name}['und']))&&(is_numeric($node->{$f_name}['und'][0]['value']))) ? $node->{$f_name}['und'][0]['value'] : 5;
+
+				$res = array_slice($counts, 0, $qty, TRUE);
+				$nids = array();
+				foreach($res as $nid => $val){
+					$nids[] = $nid;
+				}
+        return array('nids' => $nids, 'counts' => $res);
+      }
+    }
+  }
+}
+
+
+/**
+ * Callback function for uasort called in custom_similar_content_block_get_content
+ * @see custom_similar_content_block_get_content
+ *
+ */
+function custom_similar_content_uasort($a, $b) {
+  if (isset($a['summ'])) {
+    if ($a['summ'] == $b['summ']) {
+      if ($a['i'] == $b['i']) {
+        return 0;
+      }
+
+      return $a['i'] < $b['i'] ? 1 : -1;
+    }
+
+    return $a['summ'] < $b['summ'] ? 1 : -1;
+  }
+  else {
+
+    if ($a['i'] == $b['i']) {
+        return 0;
+      }
+
+      return $a['i'] < $b['i'] ? 1 : -1;
+  }
+}
+
+/**
+ * Implements hook_info_alter().
+ */
+function custom_similar_content_entity_info_alter(&$entity_info) {
+  $entity_info['node']['view modes']['similar'] = array(
+    'label' => t('Similar content'),
+    'custom settings' => TRUE,
+  );
+}
+
+/**
+ * Implements hook_flush_caches().
+ */
+function custom_similar_content_flush_caches() {
+  return array('cache_similar_content');
+}

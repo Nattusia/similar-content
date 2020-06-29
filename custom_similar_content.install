@@ -1,0 +1,14 @@
+<?php
+
+/**
+ *Implements hook_schema().
+ */
+function custom_similar_content_schema() {
+
+  $schema['cache_similar_content'] = drupal_get_schema_unprocessed('system', 'cache');
+  $schema['cache_similar_content']['description'] = 'Cache table stores some data for similar content block.';
+
+  return $schema;
+}
+
+
